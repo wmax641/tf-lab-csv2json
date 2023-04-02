@@ -1,3 +1,6 @@
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 resource "aws_s3_bucket" "bucket" {
   bucket = var.base_name
   tags   = merge({ "Name" = "${var.base_name}" }, var.common_tags)
@@ -35,10 +38,36 @@ data "aws_iam_policy_document" "lambda_assume_role_policy_doc" {
   }
 }
 
+data "aws_iam_policy_document" "lambda_cloudwatch_policy_doc" {
+    statement {
+        sid = "CreateCloudWatchLogGroup"
+        actions = ["logs:CreateLogGroup"]
+        resources = [
+	        "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*"
+        ]
+    }
+    statement {
+        sid = "PutCloudwatchLogs"
+        actions = [
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+        ]
+        resources = [
+		    "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/*"
+        ]
+    }
+}
+
+resource "aws_iam_policy" "lambda_cloudwatch_policy" {
+  name   = "${var.base_name}-lambda_cloudwatch_policy"
+  policy = data.aws_iam_policy_document.lambda_cloudwatch_policy_doc.json
+}
+
 resource "aws_iam_role" "lambda_read_role" {
   name               = "${var.base_name}-LambdaReadRole"
   path               = "/service/"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role_policy_doc.json
+  managed_policy_arns = [aws_iam_policy.lambda_cloudwatch_policy.arn]
   inline_policy {
     name = "listLambdaPolicy"
     policy = jsonencode({
@@ -54,7 +83,7 @@ resource "aws_iam_role" "lambda_read_role" {
             "s3:ListBucket"
           ]
           Effect = "Allow"
-        }
+        },
       ]
     })
   }
@@ -65,6 +94,7 @@ resource "aws_iam_role" "lambda_write_role" {
   name               = "${var.base_name}-LambdaWriteRole"
   path               = "/service/"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role_policy_doc.json
+  managed_policy_arns = [aws_iam_policy.lambda_cloudwatch_policy.arn]
   inline_policy {
     name = "uploadLinkLambdaPolicy"
     policy = jsonencode({
